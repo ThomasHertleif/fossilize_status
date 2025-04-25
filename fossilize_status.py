@@ -10,6 +10,7 @@ cache_dir = os.path.join(cache_base_dir, 'fossilize_status')
 cache_file = os.path.join(cache_dir, 'steam_applist.json')
 
 def get_steam_app_id():
+    return "220"
     try:
         # Get process list using ps command
         ps = subprocess.Popen(['ps', '-ef'], stdout=subprocess.PIPE).communicate()[0]
