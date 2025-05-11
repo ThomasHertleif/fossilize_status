@@ -1,30 +1,37 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     env,
     fs::{self, File},
-    io::{BufWriter, Write as _},
+    io::BufWriter,
     path::PathBuf,
     process::Command,
 };
-use tracing::{Instrument, debug_span, info, instrument};
+use tracing::{Instrument, info, instrument};
 use tracing_subscriber::{
     fmt::format::FmtSpan, layer::SubscriberExt as _, util::SubscriberInitExt as _,
 };
 
-struct AppTsv(String);
+#[derive(Debug, Serialize, Deserialize)]
+struct AppList {
+    applist: Apps,
+}
 
-impl AppTsv {
-    fn find_app_name(&self, app: u64) -> Option<&str> {
-        let app = app.to_string();
-        self.0
-            .lines()
-            .find(|line| line.starts_with(&app))?
-            .split('\t')
-            .nth(1)
-            .map(|x| x.trim())
+impl AppList {
+    fn find_app(&self, app: u64) -> Option<&App> {
+        self.applist.apps.iter().find(|a| a.appid == app)
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Apps {
+    apps: Vec<App>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct App {
+    appid: u64,
+    name: String,
 }
 
 fn get_cache_dir() -> PathBuf {
@@ -39,12 +46,11 @@ fn get_cache_dir() -> PathBuf {
 }
 
 fn get_cache_filename() -> PathBuf {
-    get_cache_dir().join("steam_applist.tsv")
+    get_cache_dir().join("steam_applist.json")
 }
 
-#[instrument]
 fn get_steam_app_id() -> Option<String> {
-    return Some("220".to_string());
+    // return Some("220".to_string());
     let output = Command::new("ps").args(["-ef"]).output().ok()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -66,23 +72,7 @@ fn get_steam_app_id() -> Option<String> {
 }
 
 #[instrument()]
-fn cache_applist() -> Result<AppTsv> {
-    #[derive(Debug, Serialize, Deserialize)]
-    struct AppList {
-        applist: Apps,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    struct Apps {
-        apps: Vec<App>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    struct App {
-        appid: u64,
-        name: String,
-    }
-
+fn cache_applist() -> Result<AppList> {
     let res: AppList =
         reqwest::blocking::get("https://api.steampowered.com/ISteamApps/GetAppList/v2/")
             .context("fetching")?
@@ -91,26 +81,28 @@ fn cache_applist() -> Result<AppTsv> {
 
     fs::create_dir_all(get_cache_dir()).context("create cache dir")?;
 
-    let app_tsv = res.applist.apps.iter().fold(String::new(), |mut acc, app| {
-        acc.push_str(&format!("{}\t{}\n", app.appid, app.name));
-        acc
-    });
+    let file = BufWriter::new(File::create(get_cache_filename())?);
+    serde_json::to_writer(file, &res).context("writing json file")?;
 
-    let mut file = BufWriter::new(File::create(get_cache_filename())?);
-    file.write_all(app_tsv.as_bytes())
-        .context("writing tsv file")?;
-
-    Ok(AppTsv(app_tsv))
+    Ok(res)
 }
 
 #[instrument()]
-fn get_cached() -> Result<AppTsv> {
-    fs::read_to_string(get_cache_filename())
-        .context("failed to read file")
-        .map(AppTsv)
+fn get_cached() -> Result<AppList> {
+    #[instrument()]
+    fn read() -> Result<String> {
+        fs::read_to_string(get_cache_filename()).context("failed to read file")
+    }
+
+    #[instrument(skip_all)]
+    fn parse(text: String) -> Result<AppList> {
+        serde_json::from_str::<AppList>(&text).context("failed to parse file")
+    }
+
+    read().and_then(parse)
 }
 
-fn get_or_cache() -> Result<AppTsv> {
+fn get_or_cache() -> Result<AppList> {
     get_cached().or_else(|error| {
         info!(?error, "could not read cached thingy gonna cache");
         cache_applist()
@@ -120,14 +112,14 @@ fn get_or_cache() -> Result<AppTsv> {
 fn get_game_name(app_id: u64) -> Result<Option<String>> {
     // Search for the app in the app list
     let data = get_or_cache().context("get data")?;
-    if let Some(app) = data.find_app_name(app_id) {
-        return Ok(Some(app.to_string()));
+    if let Some(app) = data.find_app(app_id) {
+        return Ok(Some(app.name.clone()));
     }
 
     // If app not found in cache, try updating cache
     let data = cache_applist().context("refresh cache")?;
-    if let Some(app) = data.find_app_name(app_id) {
-        return Ok(Some(app.to_string()));
+    if let Some(app) = data.applist.apps.iter().find(|app| app.appid == app_id) {
+        return Ok(Some(app.name.clone()));
     }
 
     Ok(None)
