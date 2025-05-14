@@ -7,7 +7,7 @@ use std::{
     path::PathBuf,
     process::Command,
 };
-use tracing::{Instrument, info, instrument};
+use tracing::{info, instrument};
 use tracing_subscriber::{
     fmt::format::FmtSpan, layer::SubscriberExt as _, util::SubscriberInitExt as _,
 };
@@ -71,7 +71,7 @@ fn get_steam_app_id() -> Option<String> {
     None
 }
 
-#[instrument()]
+#[instrument]
 fn cache_applist() -> Result<AppList> {
     let res: AppList =
         reqwest::blocking::get("https://api.steampowered.com/ISteamApps/GetAppList/v2/")
@@ -87,14 +87,12 @@ fn cache_applist() -> Result<AppList> {
     Ok(res)
 }
 
-#[instrument()]
+#[instrument]
 fn get_cached() -> Result<AppList> {
-    #[instrument()]
     fn read() -> Result<String> {
         fs::read_to_string(get_cache_filename()).context("failed to read file")
     }
 
-    #[instrument(skip_all)]
     fn parse(text: String) -> Result<AppList> {
         serde_json::from_str::<AppList>(&text).context("failed to parse file")
     }
