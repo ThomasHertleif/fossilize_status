@@ -1,3 +1,4 @@
+use clap::Parser;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -6,11 +7,19 @@ use std::{
     io::BufWriter,
     path::PathBuf,
     process::Command,
+    thread::sleep,
 };
 use tracing::{info, instrument};
 use tracing_subscriber::{
     fmt::format::FmtSpan, layer::SubscriberExt as _, util::SubscriberInitExt as _,
 };
+use std::time::Duration;
+
+#[derive(Parser)]
+struct Args {
+    #[clap(short, long, default_value_t = false)]
+    watch: bool,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct AppList {
@@ -124,6 +133,8 @@ fn get_game_name(app_id: u64) -> Result<Option<String>> {
 }
 
 fn main() -> Result<()> {
+    let args = Args::parse();
+
     tracing_subscriber::Registry::default()
         .with(
             tracing_subscriber::fmt::Layer::default()
@@ -131,6 +142,30 @@ fn main() -> Result<()> {
                 .with_writer(std::io::stderr),
         )
         .init();
+
+
+    if args.watch {
+        info!("Watching for fossilize process");
+        loop {
+            match get_steam_app_id() {
+                Some(app_id) => {
+                    info!("Found Steam App ID: {}", app_id);
+                    let app_id: u64 = app_id.parse().expect("invalid id");
+
+                    match get_game_name(app_id)? {
+                        Some(game_name) => info!("Game Name: {}", game_name),
+                        None => info!("Could not find game name"),
+                    }
+
+                    sleep(Duration::from_millis(10_000));
+                }
+                None => {
+                    info!("No fossilize process found");
+                    sleep(Duration::from_millis(10_000));
+                }
+            }
+        }
+    }
 
     match get_steam_app_id() {
         Some(app_id) => {
